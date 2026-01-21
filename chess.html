@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Chess Square Guessing Game</title>
+
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #1a0a05;
+    font-family: Arial, sans-serif;
+    gap: 50px;
+    color: white;
+  }
+
+  .board-wrapper {
+    position: relative;
+  }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(8, 65px);
+    grid-template-rows: repeat(8, 65px);
+    border: 6px solid #3a1208;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  .board.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .square {
+    position: relative;
+    box-sizing: border-box;
+  }
+
+  .light { background: #f5f1e6; }
+  .dark  { background: #3b140a; }
+
+  .square.correct {
+    outline: 4px solid #00ff66;
+  }
+
+  .square.wrong {
+    outline: 4px solid red;
+  }
+
+  .cross::before {
+    content: "✖";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 36px;
+    color: red;
+    text-shadow: 0 0 12px rgba(255,0,0,0.9);
+  }
+
+  .bulb-green::after,
+  .bulb-red::after {
+    content: "";
+    position: absolute;
+    inset: -12px;
+    border-radius: 10px;
+    opacity: 0;
+    animation: bulbPulse 0.6s ease-out forwards;
+  }
+
+  .bulb-green::after {
+    background: radial-gradient(circle, rgba(0,255,120,0.8), transparent 70%);
+  }
+
+  .bulb-red::after {
+    background: radial-gradient(circle, rgba(255,0,0,0.8), transparent 70%);
+  }
+
+  @keyframes bulbPulse {
+    0% { opacity: 0; transform: scale(0.6); }
+    50% { opacity: 1; transform: scale(1.2); }
+    100% { opacity: 0; transform: scale(1.5); }
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .target {
+    width: 160px;
+    height: 160px;
+    background: #2b0e06;
+    border-radius: 18px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 34px;
+    font-weight: bold;
+    border: 5px solid gold;
+  }
+
+  .time-controls {
+    display: flex;
+    gap: 10px;
+  }
+
+  .time-btn {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 2px solid gold;
+    background: transparent;
+    color: gold;
+    font-weight: bold;
+    cursor: pointer;
+  }
+
+  .time-btn.active {
+    background: gold;
+    color: black;
+  }
+
+  button {
+    padding: 10px 18px;
+    font-size: 14px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    background: gold;
+    font-weight: bold;
+  }
+
+  .review-controls {
+    display: none;
+    gap: 10px;
+  }
+
+  /* Coordinates (review-only, created dynamically) */
+  .coords {
+    position: absolute;
+    color: #ffd966;
+    font-weight: bold;
+    pointer-events: none;
+  }
+
+  .files {
+    bottom: -22px;
+    left: 6px;
+    display: grid;
+    grid-template-columns: repeat(8, 65px);
+    text-align: center;
+  }
+
+  .ranks {
+    left: -22px;
+    top: 6px;
+    display: grid;
+    grid-template-rows: repeat(8, 65px);
+    text-align: center;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="board-wrapper" id="boardWrapper">
+  <div class="board" id="board"></div>
+</div>
+
+<div class="panel">
+  <div class="target" id="target">--</div>
+
+  <div class="time-controls">
+    <button class="time-btn" data-time="3">3s</button>
+    <button class="time-btn active" data-time="5">5s</button>
+    <button class="time-btn" data-time="10">10s</button>
+  </div>
+
+  <div>
+    ❤️ Lives: <span id="lives">3</span> |
+    Score: <span id="score">0</span>
+  </div>
+
+  <button id="startBtn">Start Game</button>
+
+  <div class="review-controls" id="reviewControls">
+    <button id="prevBtn">⬅ Prev</button>
+    <button id="nextBtn">Next ➡</button>
+    <button id="exitReviewBtn">Exit Review</button>
+  </div>
+</div>
+
+<script>
+  const board = document.getElementById("board");
+  const boardWrapper = document.getElementById("boardWrapper");
+  const targetBox = document.getElementById("target");
+  const livesEl = document.getElementById("lives");
+  const scoreEl = document.getElementById("score");
+  const startBtn = document.getElementById("startBtn");
+  const reviewControls = document.getElementById("reviewControls");
+  const timeButtons = document.querySelectorAll(".time-btn");
+
+  let squares = {};
+  let targetSquare = "";
+  let lives = 3;
+  let score = 0;
+  let timeLimit = 5;
+  let gameActive = false;
+  let roundLocked = false;
+
+  let mistakes = [];
+  let reviewIndex = 0;
+
+  timeButtons.forEach(btn => {
+    btn.onclick = () => {
+      if (gameActive) return;
+      timeButtons.forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      timeLimit = +btn.dataset.time;
+    };
+  });
+
+  function randomSquare() {
+    return String.fromCharCode(97 + Math.floor(Math.random() * 8)) +
+           (Math.floor(Math.random() * 8) + 1);
+  }
+
+  function clearMarks() {
+    Object.values(squares).forEach(sq => {
+      sq.classList.remove("correct","wrong","cross","bulb-green","bulb-red");
+    });
+  }
+
+  function newRound() {
+    clearMarks();
+    roundLocked = false;
+    targetSquare = randomSquare();
+    targetBox.textContent = targetSquare.toUpperCase();
+  }
+
+  function startGame() {
+    lives = 3;
+    score = 0;
+    mistakes = [];
+    gameActive = true;
+
+    livesEl.textContent = lives;
+    scoreEl.textContent = score;
+
+    board.classList.add("active");
+    removeCoordinates();
+
+    startBtn.style.display = "none";
+    reviewControls.style.display = "none";
+    newRound();
+  }
+
+  function handleWrong(clicked) {
+    if (roundLocked) return;
+    roundLocked = true;
+
+    lives--;
+    livesEl.textContent = lives;
+    mistakes.push({ clicked, correct: targetSquare });
+
+    squares[clicked].classList.add("wrong","cross","bulb-red");
+    squares[targetSquare].classList.add("correct","bulb-green");
+
+    if (lives === 0) {
+      gameActive = false;
+      board.classList.remove("active");
+      startBtn.textContent = "Review Mistakes";
+      startBtn.style.display = "block";
+    } else {
+      setTimeout(newRound, 800);
+    }
+  }
+
+  function createCoordinates() {
+    removeCoordinates();
+
+    const files = document.createElement("div");
+    files.className = "coords files";
+    "ABCDEFGH".split("").forEach(c => {
+      const d = document.createElement("div");
+      d.textContent = c;
+      files.appendChild(d);
+    });
+
+    const ranks = document.createElement("div");
+    ranks.className = "coords ranks";
+    ["8","7","6","5","4","3","2","1"].forEach(r => {
+      const d = document.createElement("div");
+      d.textContent = r;
+      ranks.appendChild(d);
+    });
+
+    boardWrapper.appendChild(files);
+    boardWrapper.appendChild(ranks);
+  }
+
+  function removeCoordinates() {
+    boardWrapper.querySelectorAll(".coords").forEach(c => c.remove());
+  }
+
+  function showReview(i) {
+    clearMarks();
+    createCoordinates();
+
+    const m = mistakes[i];
+    targetBox.textContent = "Target: " + m.correct.toUpperCase();
+
+    squares[m.clicked].classList.add("wrong","cross","bulb-red");
+    squares[m.correct].classList.add("correct","bulb-green");
+  }
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const sq = document.createElement("div");
+      sq.className = "square " + ((r + c) % 2 === 0 ? "light" : "dark");
+
+      const coord = String.fromCharCode(97 + c) + (8 - r);
+      squares[coord] = sq;
+
+      sq.onclick = () => {
+        if (!gameActive || roundLocked) return;
+        if (coord === targetSquare) {
+          roundLocked = true;
+          sq.classList.add("correct","bulb-green");
+          score++;
+          scoreEl.textContent = score;
+          setTimeout(newRound, 700);
+        } else {
+          handleWrong(coord);
+        }
+      };
+
+      board.appendChild(sq);
+    }
+  }
+
+  startBtn.onclick = () => {
+    if (startBtn.textContent === "Review Mistakes") {
+      reviewIndex = 0;
+      reviewControls.style.display = "flex";
+      startBtn.style.display = "none";
+      showReview(reviewIndex);
+    } else {
+      startGame();
+    }
+  };
+
+  document.getElementById("nextBtn").onclick = () => {
+    reviewIndex = (reviewIndex + 1) % mistakes.length;
+    showReview(reviewIndex);
+  };
+
+  document.getElementById("prevBtn").onclick = () => {
+    reviewIndex = (reviewIndex - 1 + mistakes.length) % mistakes.length;
+    showReview(reviewIndex);
+  };
+
+  document.getElementById("exitReviewBtn").onclick = () => {
+    clearMarks();
+    removeCoordinates();
+    targetBox.textContent = "--";
+    reviewControls.style.display = "none";
+    startBtn.textContent = "Start Game";
+    startBtn.style.display = "block";
+  };
+</script>
+
+</body>
+</html>
